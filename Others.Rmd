@@ -1,0 +1,115 @@
+---
+title: "others"
+author: "Xinyi Lin"
+date: "7/1/2019"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+```
+
+# Import data
+
+```{r}
+library(haven)
+training <- read_dta("training.dta")
+```
+
+# Create the variable
+
+```{r}
+#summary(as.factor(training$occup1_r))
+#summary(as.factor(training$occup2_r))
+#summary(as.factor(training$ageyrs_r))
+```
+
+Notation:
+
+Variable name: student_r
+
+Created from: occup1_r, occup2_r
+
+Label: student_r --- yes-is a student, no-not a student, NA-occup1_r and occup2_r are NAs
+
+```{r}
+student_data = training %>% 
+  as_data_frame() %>% 
+  mutate(student_r = ifelse(occup1_r == 8 | occup2_r == 8, "yes", "no"),
+         student_r = ifelse(is.na(student_r) & occup1_r == 20, "no", student_r))
+```
+
+# Summary tables and plots
+
+Following are plots and table of the "student_r" variable among female and mele between 15-19.
+
+```{r}
+plot_data = student_data %>% 
+  filter(ageyrs_r <= 19) %>% 
+  mutate(student_r = as.factor(student_r),
+         sex = ifelse(female==1, "female", "male")) %>% 
+  select(visit, ageyrs_r, sex, occup1_r, occup2_r, student_r)
+```
+
+## By sex:
+
+```{r, message=FALSE}
+# porportion, title, 
+plot_data %>% 
+  ggplot(aes(visit)) +
+  geom_bar(aes(fill = student_r), position="dodge") +
+  facet_grid(. ~ sex)
+```
+
+```{r, message=FALSE}
+plot_data %>% 
+  group_by(sex, student_r, visit) %>% 
+  summarize(count = n()) %>% 
+  spread(key = student_r, value = count) %>% 
+  mutate(sum = no + yes + `<NA>`) %>% 
+  mutate(no_frq = no/sum,
+         yes_frq = yes/sum,
+         na_frq = `<NA>`/sum) %>% 
+  select(no, no_frq, yes, yes_frq, `<NA>`, na_frq)
+```
+
+## By age:
+
+```{r, message=FALSE}
+plot_data %>% 
+  ggplot(aes(visit)) +
+  geom_bar(aes(fill = student_r), position="dodge") +
+  facet_grid(. ~ ageyrs_r)
+```
+
+```{r, message=FALSE}
+plot_data %>% 
+  group_by(ageyrs_r, student_r, visit) %>% 
+  summarize(count = n()) %>% 
+  spread(key = student_r, value = count) %>% 
+  mutate(sum = no + yes + `<NA>`) %>% 
+  mutate(no_frq = no/sum,
+         yes_frq = yes/sum,
+         na_frq = `<NA>`/sum) %>% 
+  select(no, no_frq, yes, yes_frq, `<NA>`, na_frq)
+```
+
+```{r}
+plot_data = student_data %>% 
+  filter(ageyrs_r <= 19) %>% 
+  filter(is.na(student_r)) %>% 
+  mutate(student_r = as.factor(student_r),
+         sex = ifelse(female==1, "female", "male")) %>% 
+  select(visit, ageyrs_r, sex, occup1_r, occup2_r, student_r)
+```
+
+```{r}
+# check
+plot_data %>% 
+  group_by(occup1_r, occup2_r, student_r) %>% 
+  summarize(count = n(
+    
+  ))
+```
+
+

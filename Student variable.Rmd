@@ -1,0 +1,83 @@
+---
+title: "Student_r variable"
+author: "Xinyi Lin"
+date: "7/3/2019"
+output: pdf_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+```
+
+## Import data
+
+```{r}
+library(haven)
+training <- read_dta("training.dta")
+```
+
+## Creat the variable
+
+Notation:
+
+Variable name: student_r
+
+Created from: occup1_r, occup2_r
+
+Label: student_r — yes-is a student, no-not a student, NA-occup1_r and occup2_r are NAs
+
+```{r}
+student_data = training %>%
+  as_data_frame() %>%
+  mutate(student_r = ifelse(occup1_r == 8 | occup2_r == 8, "yes", "no"),
+         student_r = ifelse(is.na(student_r) & occup1_r == 20, "no", student_r))
+```
+
+## Analysis
+
+```{r}
+plot_data = student_data %>% 
+  filter(ageyrs_r <= 19) %>% 
+  mutate(student_r = as.factor(student_r),
+         visit = as.factor(visit),
+         sex = ifelse(female==1, "female", "male")) %>% 
+  select(visit, ageyrs_r, sex, occup1_r, occup2_r, student_r)
+```
+
+table:
+
+```{r}
+ table = plot_data %>%
+  group_by(visit, student_r, sex, ageyrs_r) %>%
+  summarize(count = n()) %>%
+  spread(key = student_r, value = count) %>% 
+  mutate(na = ifelse(is.na(`<NA>`), 0, `<NA>`),
+         sum = no + yes + na) %>% 
+  select(-`<NA>`) %>%
+  mutate(no_prc = round(no/sum, 4)*100, 
+         yes_prc = round(yes/sum, 4)*100, 
+         na_prc = round(na/sum, 4)*100) %>%
+  select(sex, visit, ageyrs_r, no, no_prc, yes, yes_prc, na, na_prc, sum) %>%
+  ungroup()
+```
+
+Numbers and percentages of missing values in round 1, 2, 3, 4, 11, 12, 16, 17.
+
+```{r}
+table %>%
+  filter(visit %in% c(1,2,3,4,11,12,16,17)) %>% 
+  select(sex, visit, ageyrs_r, na_prc) %>% 
+  spread(key = ageyrs_r, value = na_prc) %>% 
+  knitr::kable(digits = 3)
+```
+
+Conclusion:
+In the table above, we can find that there is only one missing value in round 1 and missing values only exit in male in round 11 and 12. In round 16 and 17, all ages have missing value except age 15. There is no missing value in other rounds except round 1, 2, 3, 4, 11, 12, 16, 17.
+
+```{r}
+liner_table = table %>% 
+  filter(na_prc > 0)
+lm = lm(na_prc ~ sex + visit + ageyrs_r, liner_table) 
+summary(lm)
+```
+

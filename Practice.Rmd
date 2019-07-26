@@ -1,0 +1,17 @@
+---
+title: "Practice"
+author: "Xinyi Lin"
+date: "7/17/2019"
+output: html_document
+---
+
+```{r}
+library(mice)
+library(lattice)
+set.seed(123)
+```
+
+```{r}
+nhanes
+```
+
