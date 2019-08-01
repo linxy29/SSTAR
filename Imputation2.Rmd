@@ -1,17 +1,23 @@
 ---
-title: "Multiple Imputation"
+title: "Imputation_missForest"
 author: "Xinyi Lin"
-date: "7/16/2019"
+date: "7/30/2019"
 output:
   pdf_document: default
   html_document: default
 ---
 
-```{r, message=FALSE, warning=FALSE}
+```{r}
+# problem
+# 1. whether educate_r = 1 means student?
+# 2. SEScat means?
+# 3. How to deal with 98?
+```
+
+
+```{r, message=FALSE}
 library(tidyverse)
 library(missForest)
-library(Hmisc)
-library(mice)
 ```
 
 ## Import data
@@ -40,28 +46,40 @@ head(student_data,10)
 ```
 
 ```{r}
+# for sexp1yr > 92, make them as NAs
 impu_data = student_data %>% 
   filter(ageyrs_r <= 19) %>% 
   mutate(student_r = as.factor(student_r),
          visit = as.factor(visit),
          sex = ifelse(female==1, "female", "male")) %>% 
-  select(visit, ageyrs_r, sex, occup1_r, occup2_r, student_r)
+  select(ageyrs_r, sex, student_r, area, educate_r, currmarr_r, sexp1yr, SEScat) %>% 
+  mutate(sex = as.factor(sex),
+         area = as.factor(area),
+         educate_r = as.factor(educate_r),
+         currmarr_r = as.factor(currmarr_r),
+         sexp1yr = ifelse(sexp1yr > 92, NA, sexp1yr),  
+         SEScat = as.factor(SEScat))
 head(impu_data)
 ```
 
 ```{r}
-md.pattern(impu_data, plot = F)
+summary(impu_data)
+summary(impu_data$sexp1yr)
 ```
 
 According to table above, there are 6208 missing values in `student_r` variables.
 
 # Imputation
 
-# MICE
+```{r}
+# need to first change dataset into matrix, then change it into data frame
+# how to decide parameters? cross-validation?
+impu_data = as.data.frame(impu_data)
+set.seed(123)
+impu_forest = missForest(impu_data, variablewise = TRUE)
+```
 
 ```{r}
-mice_data = mice(impu_data,seed = 123)
-summary(mice_data)
-mice_data$imp$student_r
+impu_forest$OOBerror
 ```
 

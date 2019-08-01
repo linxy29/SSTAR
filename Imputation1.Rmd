@@ -1,0 +1,91 @@
+---
+title: "Imputation"
+author: "Xinyi Lin"
+date: "7/27/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(missForest)
+library(Hmisc)
+library(mice)
+library(ggplot2)
+#library(VIM)
+#library(rms)
+```
+
+## Import data
+
+```{r}
+library(haven)
+training <- read_dta("training.dta")
+```
+
+## Creat the variable
+
+Notation:
+
+Variable name: student_r
+
+Created from: occup1_r, occup2_r
+
+Label: student_r — yes-is a student, no-not a student, NA-occup1_r and occup2_r are NAs
+
+```{r}
+student_data = training %>%
+  as_data_frame() %>%
+  mutate(student_r = ifelse(occup1_r == 8 | occup2_r == 8, "yes", "no"),
+         student_r = ifelse(is.na(student_r) & occup1_r == 20, "no", student_r))
+head(student_data,10)
+```
+
+```{r}
+# need data cleaning in variables
+impu_data = student_data %>% 
+  filter(ageyrs_r <= 19) %>% 
+  mutate(student_r = as.factor(student_r),
+         visit = as.factor(visit),
+         sex = ifelse(female==1, "female", "male")) %>% 
+  select(ageyrs_r, sex, student_r, area, educate_r, currmarr_r, sexp1yr, SEScat)
+head(impu_data)
+```
+
+```{r}
+md.pattern(impu_data, plot = F)
+```
+
+According to table above, there are 6208 missing values in `student_r` variables.
+
+# Imputation
+
+# MICE
+
+```{r, cache=TRUE}
+mice_data = mice(impu_data,seed = 123)
+summary(mice_data)
+#mice_data$imp$student_r
+student_r = mice_data$imp$student_r %>% 
+  gather(key = iter, value = student_r, 1:5) %>% 
+  mutate(student_r = as.factor(student_r))
+ggplot(data = student_r, aes(x = iter)) + geom_bar(aes(fill = student_r))
+```
+
+For each iteration `mice` function give same percentage of yes and no.
+
+## Add data back
+
+```{r}
+completeData = complete(mice_data, 3)
+head(completeData)
+```
+
+## Prediction
+
+```{r, eval = FALSE}
+#fit = with(data = impu_data, expr = glm(student_r ~ ageyrs_r + sexp1yr + SEScat))
+#combine = pool(fit)
+#summary(combine)
+```

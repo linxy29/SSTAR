@@ -6,12 +6,16 @@ output: html_document
 ---
 
 ```{r}
-library(mice)
-library(lattice)
-set.seed(123)
+library(missForest)
 ```
 
 ```{r}
-nhanes
+data("iris")
+iris.mis = prodNA(iris, noNA = 0.1)
+summary(iris.mis)
+```
+
+```{r}
+iris.imp = missForest(iris.imp)
 ```
 
