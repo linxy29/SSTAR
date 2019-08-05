@@ -1,5 +1,5 @@
 ---
-title: "Imputation_missForest"
+title: "Imputation"
 author: "Xinyi Lin"
 date: "7/30/2019"
 output:
@@ -7,20 +7,21 @@ output:
   html_document: default
 ---
 
-```{r}
-# problem
-# 1. whether educate_r = 1 means student?
-# 2. SEScat means?
-# 3. How to deal with 98?
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
+The goal of this file is to show the process and results of multiple imputation in the `student_r` variable.
 
-```{r, message=FALSE}
+```{r, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(missForest)
+library(Hmisc)
 ```
 
 ## Import data
+
+Import "training.dta" as target dataset. 
 
 ```{r}
 library(haven)
@@ -42,8 +43,9 @@ student_data = training %>%
   as_data_frame() %>%
   mutate(student_r = ifelse(occup1_r == 8 | occup2_r == 8, "yes", "no"),
          student_r = ifelse(is.na(student_r) & occup1_r == 20, "no", student_r))
-head(student_data,10)
 ```
+
+There are 260769 observations and 58 variables in original dataset. As we are interested in the `student_r` variables, I choose observations with age between 15-19 and variables related with the `student_r` variables which are ageyrs_r, sex, student_r, area, educate_r, currmarr_r, sexp1yr, SEScat. This subset of dataset is named as `impu_data`.
 
 ```{r}
 # for sexp1yr > 92, make them as NAs
@@ -64,22 +66,89 @@ head(impu_data)
 
 ```{r}
 summary(impu_data)
-summary(impu_data$sexp1yr)
 ```
 
-According to table above, there are 6208 missing values in `student_r` variables.
+Above are summary of `impu_data`. There are 6208 missing values in `student_r` variables.
 
 # Imputation
 
-```{r}
+# missForest
+
+First, I use `missForest` package to do multiple imputation. This package use random forest algorithm to impute data and will give the optimal imputation result with lowest estimated error.
+
+```{r, message=FALSE}
 # need to first change dataset into matrix, then change it into data frame
 # how to decide parameters? cross-validation?
-impu_data = as.data.frame(impu_data)
+impu_data = as.data.frame(as.matrix(impu_data))
 set.seed(123)
 impu_forest = missForest(impu_data, variablewise = TRUE)
 ```
 
+Following are summary and head of the imputed data. This data is stored in file "impu_forest.csv".
+
 ```{r}
-impu_forest$OOBerror
+#impu_forest$OOBerror
+impu_forest_df = impu_forest$ximp
+summary(impu_forest_df)
+head(impu_forest_df)
+write.csv(impu_forest_df, file = "impu_forest.csv")
+```
+
+Percentages of "yes" in different sexes, ages and rounds are shown as following.
+
+```{r}
+visit_data = student_data %>% 
+  filter(ageyrs_r <= 19)
+impu_forest_df$visit = visit_data$visit
+
+table1 = impu_forest_df %>%
+  group_by(visit, student_r, sex, ageyrs_r) %>%
+  dplyr::summarize(count = n()) %>%
+  spread(key = student_r, value = count) %>% 
+  mutate(sum = no + yes) %>% 
+  mutate(no_prc = round(no/sum, 4)*100, yes_prc = round(yes/sum, 4)*100) %>%
+  select(sex, visit, ageyrs_r, no, no_prc, yes, yes_prc, sum) %>% 
+  ungroup()
+
+table1 %>%
+  select(sex, visit, ageyrs_r, yes_prc) %>% 
+  spread(key = ageyrs_r, value = yes_prc) %>% 
+  knitr::kable(digits = 3)
+```
+
+# Hmisc
+
+I also use the `Hmisc` package to impute data. The `Hmisc` package uses additive semiparametric models to do multiple imputation. Following show the summary and head of first imputation results. This imputed data is stored in file "impu_himsc.csv".
+
+```{r}
+set.seed(123)
+impu_himsc = aregImpute(~ ageyrs_r + sex + student_r + area + educate_r + currmarr_r + SEScat, data = impu_data)
+impu_himsc_l = impute.transcan(impu_himsc, data=impu_data, imputation=1, list.out=TRUE, pr=FALSE, check=FALSE)
+impu_himsc_df = as.data.frame(impu_himsc_l)
+summary(impu_himsc_df)
+head(impu_himsc_df)
+write.csv(impu_himsc_df, file = "impu_himsc.csv")
+```
+
+Percentages of "yes" in different sexes, ages and rounds are shown as following.
+
+```{r}
+impu_himsc_df$visit = visit_data$visit
+table2 = impu_himsc_df %>%
+  group_by(visit, student_r, sex, ageyrs_r) %>%
+  dplyr::summarize(count = n()) %>%
+  spread(key = student_r, value = count) %>% 
+  mutate(sum = no + yes) %>% 
+  mutate(no_prc = round(no/sum, 4)*100, yes_prc = round(yes/sum, 4)*100) %>%
+  select(sex, visit, ageyrs_r, no, no_prc, yes, yes_prc, sum) %>% 
+  ungroup()
+
+table2 %>%
+  select(sex, visit, ageyrs_r, yes_prc) %>% 
+  spread(key = ageyrs_r, value = yes_prc) %>% 
+  knitr::kable(digits = 3)
+```
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
 ```
 
