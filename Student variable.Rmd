@@ -47,9 +47,9 @@ plot_data = student_data %>%
 table:
 
 ```{r}
- table = plot_data %>%
+table = plot_data %>%
   group_by(visit, student_r, sex, ageyrs_r) %>%
-  summarize(count = n()) %>%
+  dplyr::summarize(count = n()) %>%
   spread(key = student_r, value = count) %>% 
   mutate(na = ifelse(is.na(`<NA>`), 0, `<NA>`),
          sum = no + yes + na) %>% 
@@ -59,6 +59,19 @@ table:
          na_prc = round(na/sum, 4)*100) %>%
   select(sex, visit, ageyrs_r, no, no_prc, yes, yes_prc, na, na_prc, sum) %>%
   ungroup()
+```
+
+plot:
+
+```{r}
+table %>% 
+  filter(na_prc > 0) %>% 
+  select(sex, visit, ageyrs_r, na_prc) %>% 
+  mutate(ageyrs_r = as.factor(ageyrs_r)) %>% 
+  ggplot(aes(x=visit, y=na_prc, fill=ageyrs_r))+
+  geom_bar(stat='identity', position="dodge") +
+  facet_grid(. ~ sex) +
+  theme(legend.position="top")
 ```
 
 Numbers and percentages of missing values in round 1, 2, 3, 4, 11, 12, 16, 17.

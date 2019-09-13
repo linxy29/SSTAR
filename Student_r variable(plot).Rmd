@@ -56,6 +56,7 @@ plot_data = student_data %>%
 ```{r, message=FALSE}
 # porportion, title, 
 plot_data %>% 
+  filter(is.na(student_r)) %>% 
   ggplot(aes(visit)) +
   geom_bar(aes(fill = student_r), position="dodge") +
   facet_grid(. ~ sex)
@@ -64,7 +65,7 @@ plot_data %>%
 ```{r, message=FALSE}
 plot_data %>% 
   group_by(sex, student_r, visit) %>% 
-  summarize(count = n()) %>% 
+  dplyr::summarize(count = n()) %>% 
   spread(key = student_r, value = count) %>% 
   mutate(sum = no + yes + `<NA>`) %>% 
   mutate(no_frq = no/sum,
@@ -85,7 +86,7 @@ plot_data %>%
 ```{r, message=FALSE}
 plot_data %>% 
   group_by(ageyrs_r, student_r, visit) %>% 
-  summarize(count = n()) %>% 
+  dplyr::summarize(count = n()) %>% 
   spread(key = student_r, value = count) %>% 
   mutate(sum = no + yes + `<NA>`) %>% 
   mutate(no_frq = no/sum,

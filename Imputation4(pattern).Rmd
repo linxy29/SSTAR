@@ -1,0 +1,131 @@
+---
+title: "Imputation pattern"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+The purpose of following codes is to test imputation ability of two packages--Himsc, missForest and mice.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(missForest)
+library(Hmisc)
+library(caret)
+library(mice)
+```
+
+## Import data
+
+Import "training.dta" as target dataset. 
+
+```{r}
+library(haven)
+training <- read_dta("training.dta")
+```
+
+## Creat the variable
+
+Notation:
+
+Variable name: student_r
+
+Created from: occup1_r, occup2_r
+
+Label: student_r — yes-is a student, no-not a student, NA-occup1_r and occup2_r are NAs
+
+```{r}
+student_data = training %>%
+  as_data_frame() %>%
+  mutate(student_r = ifelse(occup1_r == 8 | occup2_r == 8, "yes", "no"),
+         student_r = ifelse(is.na(student_r) & occup1_r == 20, "no", student_r))
+```
+
+```{r}
+# for sexp1yr > 92, make them as NAs
+impu_data = student_data %>% 
+  filter(ageyrs_r <= 19) %>% 
+  mutate(student_r = as.factor(student_r),
+         visit = as.factor(visit),
+         sex = ifelse(female==1, "female", "male")) %>% 
+  select(ageyrs_r, sex, student_r, area, educate_r, currmarr_r, sexp1yr, SEScat) %>% 
+  mutate(sex = as.factor(sex),
+         area = as.factor(area),
+         educate_r = as.factor(educate_r),
+         currmarr_r = as.factor(currmarr_r),
+         sexp1yr = ifelse(sexp1yr > 92, NA, sexp1yr),  
+         SEScat = as.factor(SEScat))
+head(impu_data)
+```
+
+# Test dataset
+
+First, choose observations with known student_r as test dataset. There are 41482 observations in total.
+
+```{r}
+test_data = impu_data[!is.na(impu_data$student_r),]
+```
+
+Then, randomly split test dataset into ten subsets and set them as missing values to test error rates of each fold when using different methods.
+
+```{r}
+flds <- createFolds(1:41482, k = 10, list = TRUE, returnTrain = FALSE)
+#flds
+```
+
+```{r, eval=FALSE}
+set.seed(123)
+test_data = as.data.frame(as.matrix(test_data))
+na_data = test_data
+na_data[flds[[1]], 3] = NA
+#mdf = missing_data.frame(na_data)
+#imputations <- mi(mdf)
+```
+
+```{r,results='hide'}
+set.seed(123)
+test_data = as.data.frame(as.matrix(test_data))
+error_index = rep(0,41482)
+#error_data = data.frame(ageyrs_r=numeric(0), sex=character(0), student_r=character(0), area=numeric(0), educate_r=numeric(0), currmarr_r=numeric(0), sexp1yr=numeric(0), SEScat=numeric(0))
+for (n in 1:10){
+  na_data = test_data
+  na_data[flds[[n]], 3] = NA
+  # missForest
+  impu_forest = missForest(na_data)
+  impu_forest_df = impu_forest$ximp
+  # yes = 2, no = 1
+  error_vector = abs(as.numeric(impu_forest_df[, 3]) - as.numeric(test_data[, 3]))
+  error_index = error_index + error_vector
+}
+```
+
+```{r}
+error_data = test_data[which(error_index!=0),]
+error_data %>% 
+  ggplot(aes(ageyrs_r)) +
+  geom_bar(aes(fill = educate_r), position="dodge") +
+  facet_grid(. ~ sex)
+error_data %>% 
+  ggplot(aes(ageyrs_r)) +
+  geom_bar(aes(fill = currmarr_r), position="dodge") +
+  facet_grid(. ~ sex)
+test_data %>% 
+  ggplot(aes(ageyrs_r)) +
+  geom_bar(aes(fill = educate_r), position="dodge") +
+  facet_grid(. ~ sex)
+test_data %>% 
+  ggplot(aes(ageyrs_r)) +
+  geom_bar(aes(fill = currmarr_r), position="dodge") +
+  facet_grid(. ~ sex)
+```
+
+```{r}
+error_data %>% 
+  #group_by(ageyrs_r, sex, area, educate_r, currmarr_r, sexp1yr, SEScat) %>% 
+  group_by(ageyrs_r, sex, area) %>% 
+  dplyr::summarize(count = n()) %>% 
+  mutate(percentage = count*100/10279)
+```
+
