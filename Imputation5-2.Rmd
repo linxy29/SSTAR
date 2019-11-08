@@ -1,0 +1,455 @@
+---
+title: "Imputation 6"
+author: "Xinyi Lin"
+date: "10/25/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+Based on what we get in "Imputation5-new-.Rmd" file, we let pregnow_r==1, currmarr_r==1 and educate_r==0 be student_r == 0, and use AUC instead of missclassification.  
+
+```{r, message=FALSE}
+library(tidyverse)
+library(missForest)
+library(ggplot2)
+library(caret)
+library(Hmisc)
+library(mice)
+```
+
+## Import data
+
+Import data "R1_R18_partcleaned_20190913.dta".
+
+```{r}
+library(haven)
+new_data <- read_dta("R1_R18_partcleaned_20190913.dta")
+```
+
+## Creat the variable
+
+Notation:
+
+Variable name: student_r
+
+Created from: occup1_r, occup2_r
+
+Label: student_r — yes-is a student, no-not a student, NA-occup1_r and occup2_r are NAs
+
+Let pregnow_r==1, currmarr_r==1 and educate_r==0 be student_r == 0.
+
+```{r}
+student_data = new_data %>%
+  as.data.frame() %>% 
+  mutate(student_r = ifelse(occup1_r == 8 | occup2_r == 8, 1, 0),
+         student_r = ifelse(is.na(student_r) & occup1_r == 20, 0, student_r))
+#head(student_data)
+added_data = student_data %>% 
+  mutate(student_r = ifelse(is.na(student_r)&pregnow_r==1, 0, student_r),
+         student_r = ifelse(is.na(student_r)&currmarr_r==1, 0, student_r),
+         student_r = ifelse(is.na(student_r)&educate_r==0, 0, student_r)) 
+add_data = student_data %>% 
+  filter(is.na(student_r)) %>% 
+  filter(pregnow_r==1|currmarr_r==1|educate_r==0)
+```
+
+There are `r nrow(add_data)` student_r observation be marked as 0.
+
+## Select variables and tidy data
+
+Predictors including: visit, ageyrs_r, gender, area, educate_r, currmarr_r, sexp1yr, SEScat, study_id, pregnow_r, numchild_r, eversex_r, currrltn.
+
+```{r}
+target_data = added_data %>% 
+  filter(ageyrs_r <= 19 & ageyrs_r>=15) %>% 
+  mutate(student_r = as.factor(student_r),
+         visit = as.factor(visit),
+         gender = ifelse(female==1, "female", "male")) %>% 
+  select(student_r, visit, ageyrs_r, gender, area, educate_r, currmarr_r, sexp1yr, SEScat, pregnow_r, eversex_r, currrltn)
+summary(target_data)
+```
+
+The way to tidy data:
+
+female -> sex;1 -> female, 0 -> male
+
+sexp1yr; <=2 -> 92, >2 -> 93, 97,98,99 -> NA
+
+pregnow_r; NA	For NA with sex equals to male -> 98(not applicable)
+
+currrltn(Do you currently have a sexual relationship with someone to whom  you are not officially married or in a consensual union?)	0,8,9 -> NA
+
+```{r}
+impu_data = target_data %>% 
+  mutate(sexp1yr = ifelse(sexp1yr %in% c(97, 98, 99), NA, sexp1yr),
+         sexp1yr = ifelse(sexp1yr<=2, "a few(1-2)", "a lot(3+)"),
+         sexp1yr = as.factor(sexp1yr)) %>% 
+  mutate(pregnow_r = ifelse(gender=="male", 98, pregnow_r),
+         pregnow_r = as.factor(pregnow_r)) %>% 
+  mutate(currrltn = ifelse(currrltn %in% c(0, 8,9), NA, currrltn),
+         currrltn = as.factor(currrltn)) %>% 
+  mutate(visit = as.factor(visit),
+         area = as.factor(area),
+         educate_r = as.factor(educate_r),
+         currmarr_r = as.factor(currmarr_r),
+         SEScat = as.factor(SEScat),
+         eversex_r = as.factor(eversex_r),
+         gender = as.factor(gender))
+summary(impu_data)
+```
+
+## Imputation
+
+### Get test data
+
+```{r}
+test_data = impu_data[!is.na(impu_data$student_r),]
+summary(test_data)
+```
+
+First, choose observations with known student_r as test dataset. There are `r nrow(test_data)` observations in total.
+
+### Test three packages
+
+```{r}
+set.seed(123)
+flds <- createFolds(1:nrow(test_data), k = 10, list = TRUE, returnTrain = FALSE)
+#flds
+```
+
+```{r, results='hide'}
+# error_rate = vector("list", 10)
+set.seed(123)
+test_data = as.data.frame(as.matrix(test_data))
+error_himsc = rep(NA, 10)
+error_forest = rep(NA, 10)
+error_mice = rep(NA, 10)
+for (n in 1:10){
+  na_data = test_data
+  na_data[flds[[n]], 1] = NA
+  # missForest
+  impu_forest = missForest(na_data)
+  impu_forest_df = impu_forest$ximp
+  # Himsc
+  impu_himsc = aregImpute(~ student_r + visit + ageyrs_r + gender + area + educate_r + currmarr_r + SEScat + pregnow_r + eversex_r + currrltn, data = na_data)
+  impu_himsc_l = impute.transcan(impu_himsc, data=na_data, imputation=1, list.out=TRUE, pr=FALSE, check=FALSE)
+  impu_himsc_df = as.data.frame(impu_himsc_l)
+  # mice
+  mice_data = mice(impu_data,seed = 123)
+  impu_mice_df = complete(mice_data, 1)
+  # calculate error rates
+  # yes = 2, no = 1
+  error_himsc[n] = sum(abs(as.numeric(impu_himsc_df[flds[[n]], 1]) - as.numeric(test_data[flds[[n]], 1])))/length(test_data[flds[[n]], 1])
+  error_forest[n] = sum(abs(as.numeric(impu_forest_df[flds[[n]], 1]) - as.numeric(test_data[flds[[n]], 1])))/length(test_data[flds[[n]], 1])
+  error_mice[n] = sum(abs(as.numeric(impu_mice_df[flds[[n]], 1]) - as.numeric(test_data[flds[[n]], 1])))/length(test_data[flds[[n]], 1])
+}
+res_error = list(himsc = error_himsc, forest = error_forest, mice = error_mice)
+```
+
+We can find that error rates of Himsc package is around 33% and error rates of missForest is around 24%. Following is the plot of error rates.
+
+```{r}
+res_error
+res_error %>% 
+  as.data.frame() %>% 
+  mutate(fold = 1:10) %>% 
+  gather(key = methods, value = error_rate, himsc:mice) %>% 
+  ggplot(aes(x = fold, y = error_rate, color = methods)) + geom_line() +
+  theme(legend.position="top")
+mean(res_error$himsc)
+mean(res_error$forest)
+mean(res_error$mice)
+```
+
+### Permutation 
+
+Resample each variables separately to test their contribution to imputation. According to results, we can find `ageyrs_r` have most contribution to correct imputation.
+
+```{r, results='hide'}
+set.seed(123)
+var_mis <- matrix(data=NA,nrow=10,ncol=10) # 10 variables and 10 folds for each variables
+for (j in 3:12) {
+  permu_data = test_data
+  flds <- createFolds(1:nrow(permu_data), k = 10, list = TRUE, returnTrain = FALSE)
+  target_variable = permu_data[,j]
+  new_variable = sample(target_variable, nrow(permu_data), replace = T)
+  permu_data[,j] = new_variable
+  permu_data = as.data.frame(as.matrix(permu_data))
+  for (n in 1:10) {
+    na_data = permu_data
+    na_data[flds[[n]], 1] = NA
+    # missForest
+    impu_forest = missForest(na_data)
+    impu_forest_df = impu_forest$ximp
+    # calculate error rates
+    # yes = 2, no = 1
+    var_mis[j-2,n] = sum(abs(as.numeric(impu_forest_df[flds[[n]], 1]) - as.numeric(permu_data[flds[[n]], 1])))/length(permu_data[flds[[n]], 1])
+  }
+}
+```
+
+```{r}
+colnames(var_mis) = c("fold1", "fold2", "fold3", "fold4", "fold5", "fold6", "fold7", "fold8", "fold9", "fold10")
+rownames(var_mis) = c("ageyrs_r","gender","area","educate_r","currmarr_r","sexp1yr","SEScat","pregnow_r","eversex_r","currrltn")
+apply(var_mis,1,mean) %>% 
+  sort()
+```
+
+### Test imputation performance
+
+Then, randomly split test dataset into ten subsets and set them as missing values to test error rates of each fold when using different methods.
+
+```{r}
+flds <- createFolds(1:nrow(test_data), k = 10, list = TRUE, returnTrain = FALSE)
+#flds
+```
+
+```{r, results='hide'}
+# error_rate = vector("list", 10)
+set.seed(123)
+test_data = as.data.frame(as.matrix(test_data))
+error_forest = rep(NA, 10) # indicate misclassification rate
+error_index = rep(0,nrow(test_data)) # indcate misclassification rows
+for (n in 1:10){
+  na_data = test_data
+  na_data[flds[[n]], 1] = NA
+  # missForest
+  impu_forest = missForest(na_data)
+  impu_forest_df = impu_forest$ximp
+  # calculate error rates
+  # yes = 2, no = 1
+  error_forest[n] = sum(abs(as.numeric(impu_forest_df[flds[[n]], 1]) - as.numeric(test_data[flds[[n]], 1])))/length(test_data[flds[[n]], 1])
+  error_vector = abs(as.numeric(impu_forest_df[, 1]) - as.numeric(test_data[, 1]))
+  error_index = error_index + error_vector
+}
+```
+
+For misclassification rate:
+
+```{r}
+summary(error_forest)
+plot(1:10,error_forest,xlab="Fold",ylab="Error Rate",type="b",lty=1)
+```
+
+### Marginal distribution
+
+For the misclassification dataset:
+
+```{r}
+error_data = test_data %>% 
+  mutate(miscla = error_index,
+         miscla = as.factor(miscla))
+```
+
+There are `r nrow(error_data)` observations are misclassified. Marginal distribution of misclassification rate in different gourps are significant among following variables: `educate_r`， `currmarr_r`, `sexp1yr`， `pregnow_r`.
+
+For `educate_r`: **significant difference**
+
+```{r}
+educate_error = error_data %>% 
+  group_by(miscla, educate_r) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(educate_r, mis_rate, sum) 
+educate_error %>% knitr::kable()
+educate_error %>% 
+  ggplot(aes(educate_r, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `currmarr_r`: **significant difference**
+
+```{r}
+currmarr_error = error_data %>% 
+  group_by(miscla, currmarr_r) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(miscla_1 = ifelse(is.na(miscla_1), 0, miscla_1)) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(currmarr_r, mis_rate, sum) 
+currmarr_error %>% knitr::kable()
+currmarr_error %>% 
+  ggplot(aes(currmarr_r, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `sexp1yr`: **significant difference**
+
+```{r}
+sexp1yr_error = error_data %>% 
+  group_by(miscla, sexp1yr) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(miscla_1 = ifelse(is.na(miscla_1), 0, miscla_1),
+         miscla_0 = ifelse(is.na(miscla_0), 0, miscla_0)) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(sexp1yr, mis_rate, sum) 
+sexp1yr_error %>% knitr::kable()
+sexp1yr_error %>% 
+  ggplot(aes(sexp1yr, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `pregnow_r`: **significant difference**
+
+```{r}
+pregnow_error = error_data %>% 
+  group_by(miscla, pregnow_r) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(pregnow_r, mis_rate, sum) 
+pregnow_error[c(1,2,4),] %>% knitr::kable()
+pregnow_error[c(1,2,4),] %>% 
+  ggplot(aes(pregnow_r, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `visit`:
+
+```{r}
+visit_error = error_data %>% 
+  #mutate(visit = as.numeric(visit)) %>%   # if as.numeric directly, it will be based on level
+  mutate(visit = as.numeric(as.character(visit))) %>%  
+  group_by(miscla, visit) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(visit, mis_rate, sum) 
+visit_error %>% knitr::kable()
+visit_error %>% 
+  ggplot(aes(visit, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `ageyrs_r`:
+
+```{r}
+age_error = error_data %>% 
+  group_by(miscla, ageyrs_r) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(miscla_1 = ifelse(is.na(miscla_1), 0, miscla_1)) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(ageyrs_r, mis_rate, sum) 
+age_error %>% knitr::kable()
+age_error %>% 
+  ggplot(aes(ageyrs_r, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `gender`:
+
+```{r}
+gender_error = error_data %>% 
+  group_by(miscla, gender) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(gender, mis_rate, sum) 
+gender_error %>% knitr::kable()
+gender_error %>% 
+  ggplot(aes(gender, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `area`:
+
+```{r}
+area_error = error_data %>% 
+  group_by(miscla, area) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(area, mis_rate, sum) 
+area_error %>% knitr::kable()
+area_error %>% 
+  ggplot(aes(area, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `SEScat`:
+
+```{r}
+SEScat_error = error_data %>% 
+  group_by(miscla, SEScat) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(SEScat, mis_rate, sum) 
+SEScat_error %>% knitr::kable()
+SEScat_error %>% 
+  ggplot(aes(SEScat, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `eversex`:
+
+```{r}
+eversex_error = error_data %>% 
+  group_by(miscla, eversex_r) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(miscla_1 = ifelse(is.na(miscla_1), 0, miscla_1)) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(eversex_r, mis_rate, sum) 
+eversex_error %>% knitr::kable()
+eversex_error %>% 
+  ggplot(aes(eversex_r, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+For `currrltn`:
+
+```{r}
+currrltn_error = error_data %>% 
+  group_by(miscla, currrltn) %>% 
+  dplyr::summarize(n = n()) %>% 
+  ungroup() %>% 
+  mutate(miscla = str_c("miscla_", miscla)) %>% 
+  spread(key = miscla, value = n) %>% 
+  mutate(sum = miscla_0 + miscla_1,
+         mis_rate = miscla_1/sum) %>% 
+  select(currrltn, mis_rate, sum) 
+currrltn_error %>% knitr::kable()
+currrltn_error %>% 
+  ggplot(aes(currrltn, mis_rate)) +
+  geom_bar(stat = "identity")
+```
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
